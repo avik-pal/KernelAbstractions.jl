@@ -105,45 +105,45 @@ function unittest_testsuite(Backend, backend_str, backend_mod, BackendArrayT; sk
         A = allocate(backend, Int, 16, 16)
         index_linear_global(backend, 8)(A, ndrange = length(A))
         synchronize(backend)
-        @test all(A .== LinearIndices(A))
+        @test all(Array(A) .== LinearIndices(A))
 
         A = allocate(backend, Int, 8)
         index_linear_local(backend, 8)(A, ndrange = length(A))
         synchronize(backend)
-        @test all(A .== 1:8)
+        @test all(Array(A) .== 1:8)
 
         A = allocate(backend, Int, 16)
         index_linear_local(backend, 8)(A, ndrange = length(A))
         synchronize(backend)
-        @test all(A[1:8] .== 1:8)
-        @test all(A[9:16] .== 1:8)
+        @test all(Array(A)[1:8] .== 1:8)
+        @test all(Array(A)[9:16] .== 1:8)
 
         A = allocate(backend, Int, 8, 2)
         index_linear_local(backend, 8)(A, ndrange = length(A))
         synchronize(backend)
-        @test all(A[1:8] .== 1:8)
-        @test all(A[9:16] .== 1:8)
+        @test all(Array(A)[1:8] .== 1:8)
+        @test all(Array(A)[9:16] .== 1:8)
 
         A = allocate(backend, CartesianIndex{2}, 16, 16)
         index_cartesian_global(backend, 8)(A, ndrange = size(A))
         synchronize(backend)
-        @test all(A .== CartesianIndices(A))
+        @test all(Array(A) .== CartesianIndices(A))
 
         A = allocate(backend, CartesianIndex{1}, 16, 16)
         index_cartesian_global(backend, 8)(A, ndrange = length(A))
         synchronize(backend)
-        @test all(A[:] .== CartesianIndices((length(A),)))
+        @test all(Array(A)[:] .== CartesianIndices((length(A),)))
 
         # Non-multiplies of the workgroupsize
         A = allocate(backend, Int, 7, 7)
         index_linear_global(backend, 8)(A, ndrange = length(A))
         synchronize(backend)
-        @test all(A .== LinearIndices(A))
+        @test all(Array(A) .== LinearIndices(A))
 
         A = allocate(backend, Int, 5)
         index_linear_local(backend, 8)(A, ndrange = length(A))
         synchronize(backend)
-        @test all(A .== 1:5)
+        @test all(Array(A) .== 1:5)
     end
 
     @kernel function constarg(A, @Const(B))
@@ -154,7 +154,7 @@ function unittest_testsuite(Backend, backend_str, backend_mod, BackendArrayT; sk
     @conditional_testset "Const" skip_tests begin
         let kernel = constarg(Backend(), 8, (1024,))
             # this is poking at internals
-            iterspace = NDRange{1, StaticSize{(128,)}, StaticSize{(8,)}}();
+            iterspace = NDRange{1, StaticSize{(128,)}, StaticSize{(8,)}}()
             ctx = if Backend == CPU
                 KernelAbstractions.mkcontext(kernel, 1, nothing, iterspace, Val(NoDynamicCheck()))
             else
@@ -199,7 +199,7 @@ function unittest_testsuite(Backend, backend_str, backend_mod, BackendArrayT; sk
     A = KernelAbstractions.zeros(Backend(), Int64, 1024)
     kernel_val!(Backend())(A, Val(3), ndrange = size(A))
     synchronize(Backend())
-    @test all((a) -> a == 3, A)
+    @test all((a) -> a == 3, Array(A))
 
     @kernel function kernel_empty()
         nothing
@@ -266,6 +266,7 @@ function unittest_testsuite(Backend, backend_str, backend_mod, BackendArrayT; sk
     function f(KernelAbstractions.@context, a)
         I = @index(Global, Linear)
         a[I] = 1
+        return
     end
     @kernel cpu = false function context_kernel(a)
         f(KernelAbstractions.@context, a)
@@ -276,7 +277,7 @@ function unittest_testsuite(Backend, backend_str, backend_mod, BackendArrayT; sk
             A = KernelAbstractions.zeros(Backend(), Int64, 1024)
             context_kernel(Backend())(A, ndrange = size(A))
             synchronize(Backend())
-            @test all((a) -> a == 1, A)
+            @test all((a) -> a == 1, Array(A))
         else
             @test_throws ErrorException("This kernel is unavailable for backend CPU") context_kernel(Backend())
         end
@@ -296,4 +297,33 @@ function unittest_testsuite(Backend, backend_str, backend_mod, BackendArrayT; sk
         @test KernelAbstractions.default_cpu_workgroupsize((5, 7, 13, 17)) == (5, 7, 13, 2)
     end
 
+    @testset "empty arrays" begin
+        backend = Backend()
+        @test size(allocate(backend, Float32, 0)) == (0,)
+        @test size(allocate(backend, Float32, 3, 0)) == (3, 0)
+        @test size(allocate(backend, Float32, 0, 9)) == (0, 9)
+        @test size(KernelAbstractions.zeros(backend, Float32, 0)) == (0,)
+        @test size(KernelAbstractions.zeros(backend, Float32, 3, 0)) == (3, 0)
+        @test size(KernelAbstractions.zeros(backend, Float32, 0, 9)) == (0, 9)
+    end
+
+    @kernel cpu = false function gpu_return_kernel!(x)
+        i = @index(Global)
+        if i ≤ (length(x) ÷ 2)
+            x[i] = 1
+            return
+        end
+    end
+    @testset "GPU kernel return statement" begin
+        if !(Backend() isa CPU)
+            A = KernelAbstractions.zeros(Backend(), Int64, 1024)
+            gpu_return_kernel!(Backend())(A; ndrange = length(A))
+            synchronize(Backend())
+            Ah = Array(A)
+            @test all(a -> a == 1, @view(Ah[1:(length(A) ÷ 2)]))
+            @test all(a -> a == 0, @view(Ah[(length(A) ÷ 2 + 1):end]))
+        end
+    end
+
+    return
 end

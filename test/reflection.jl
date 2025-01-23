@@ -23,12 +23,13 @@ function test_typed_kernel_dynamic(backend, backend_str, ArrayT)
     else
         @ka_code_typed kernel(A, ndrange = size(A), workgroupsize = (32, 32))
     end
-    if backend_str == "CUDA" || backend_str == "ROCM" || backend_str == "oneAPI" || backend_str == "Metal"
+    if backend_str in ["CUDA", "ROCM", "oneAPI", "Metal", "OpenCL"]
         @test_broken isa(res, Pair{Core.CodeInfo, DataType})
     else
         @test isa(res, Pair{Core.CodeInfo, DataType})
     end
     @test isa(res[1].code, Array{Any, 1})
+    return
 end
 
 function test_typed_kernel_dynamic_no_info(backend, backend_str, ArrayT)
@@ -37,12 +38,13 @@ function test_typed_kernel_dynamic_no_info(backend, backend_str, ArrayT)
     C = similar(A)
     kernel = add3(backend())
     res = @ka_code_typed kernel(A, B, C, ndrange = size(A))
-    if backend_str == "CUDA" || backend_str == "ROCM" || backend_str == "oneAPI" || backend_str == "Metal"
+    if backend_str in ["CUDA", "ROCM", "oneAPI", "Metal", "OpenCL"]
         @test_broken isa(res, Pair{Core.CodeInfo, DataType})
     else
         @test isa(res, Pair{Core.CodeInfo, DataType})
     end
     @test isa(res[1].code, Array{Any, 1})
+    return
 end
 
 function test_typed_kernel_static(backend, backend_str, ArrayT)
@@ -53,12 +55,13 @@ function test_typed_kernel_static(backend, backend_str, ArrayT)
         mul2(backend(), (32, 32))
     end
     res = @ka_code_typed kernel(A, ndrange = size(A))
-    if backend_str == "CUDA" || backend_str == "ROCM" || backend_str == "oneAPI" || backend_str == "Metal"
+    if backend_str in ["CUDA", "ROCM", "oneAPI", "Metal", "OpenCL"]
         @test_broken isa(res, Pair{Core.CodeInfo, DataType})
     else
         @test isa(res, Pair{Core.CodeInfo, DataType})
     end
     @test isa(res[1].code, Array{Any, 1})
+    return
 end
 
 function test_typed_kernel_no_optimize(backend, backend_str, ArrayT)
@@ -72,6 +75,7 @@ function test_typed_kernel_no_optimize(backend, backend_str, ArrayT)
     res_opt = @ka_code_typed kernel(A, ndrange = size(A))
     # FIXME: Need a better test
     # @test size(res[1].code) < size(res_opt[1].code)
+    return
 end
 
 function test_expr_kernel(backend, backend_str, ArrayT)
@@ -83,12 +87,13 @@ function test_expr_kernel(backend, backend_str, ArrayT)
         addi(backend(), (32, 32))
     end
     res = @ka_code_typed kernel(A, C, 1 + 2, ndrange = size(A))
-    if backend_str == "CUDA" || backend_str == "ROCM" || backend_str == "oneAPI" || backend_str == "Metal"
+    if backend_str in ["CUDA", "ROCM", "oneAPI", "Metal", "OpenCL"]
         @test_broken isa(res, Pair{Core.CodeInfo, DataType})
     else
         @test isa(res, Pair{Core.CodeInfo, DataType})
     end
     @test isa(res[1].code, Array{Any, 1})
+    return
 end
 
 function reflection_testsuite(backend, backend_str, ArrayT)
@@ -97,4 +102,5 @@ function reflection_testsuite(backend, backend_str, ArrayT)
     test_typed_kernel_static(backend, backend_str, ArrayT)
     test_typed_kernel_no_optimize(backend, backend_str, ArrayT)
     test_expr_kernel(backend, backend_str, ArrayT)
+    return
 end

@@ -10,11 +10,8 @@ export synchronize, get_backend, allocate
 import PrecompileTools
 
 import Atomix: @atomic, @atomicswap, @atomicreplace
-import UnsafeAtomics
 
-using LinearAlgebra
 using MacroTools
-using SparseArrays
 using StaticArrays
 using Adapt
 
@@ -53,7 +50,7 @@ synchronize(backend)
 ```
 """
 macro kernel(expr)
-    __kernel(expr, #=generate_cpu=# true, #=force_inbounds=# false)
+    return __kernel(expr, #=generate_cpu=# true, #=force_inbounds=# false)
 end
 
 """
@@ -71,7 +68,7 @@ This allows for two different configurations:
 """
 macro kernel(ex...)
     if length(ex) == 1
-        __kernel(ex[1], true, false)
+        return __kernel(ex[1], true, false)
     else
         generate_cpu = true
         force_inbounds = false
@@ -91,7 +88,7 @@ macro kernel(ex...)
                 )
             end
         end
-        __kernel(ex[end], generate_cpu, force_inbounds)
+        return __kernel(ex[end], generate_cpu, force_inbounds)
     end
 end
 
@@ -113,12 +110,52 @@ macro Const end
 """
     copyto!(::Backend, dest::AbstractArray, src::AbstractArray)
 
-Perform a `copyto!` operation that execution ordered with respect to the backend.
+Perform an asynchronous `copyto!` operation that is execution ordered with respect to the back-end.
+
+For most users, `Base.copyto!` should suffice, performance a simple, synchronous copy.
+Only when you know you need asynchronicity w.r.t. the host, you should consider using
+this asynchronous version, which requires additional lifetime guarantees as documented below.
+
+!!! warning
+
+    Because of the asynchronous nature of this operation, the user is required to guarantee that the lifetime
+    of the source extends past the *completion* of the copy operation as to avoid a use-after-free. It is not
+    sufficient to simply use `GC.@preserve` around the call to `copyto!`, because that only extends the
+    lifetime past the operation getting queued. Instead, it may be required to `synchronize()`,
+    or otherwise guarantee that the source will still be around when the copy is executed:
+
+    ```julia
+    arr = zeros(64)
+    GC.@preserve arr begin
+        copyto!(backend, arr, ...)
+        # other operations
+        synchronize(backend)
+    end
+    ```
 
 !!! note
-    Backend implementations **must** implement this function.
+
+    On some back-ends it may be necessary to first call [`pagelock!`](@ref) on host memory
+    to enable fully asynchronous behavior w.r.t to the host.
+
+!!! note
+    Backends **must** implement this function.
 """
 function copyto! end
+
+"""
+    pagelock!(::Backend, dest::AbstractArray)
+
+Pagelock (pin) a host memory buffer for a backend device. This may be necessary for [`copyto!`](@ref)
+to perform asynchronously w.r.t to the host/
+
+This function should return `nothing`; or `missing` if not implemented.
+
+
+!!! note
+    Backends **may** implement this function.
+"""
+function pagelock! end
 
 """
     synchronize(::Backend)
@@ -169,7 +206,7 @@ a tuple corresponding to kernel configuration. In order to get
 the total size you can use `prod(@groupsize())`.
 """
 macro groupsize()
-    quote
+    return quote
         $groupsize($(esc(:__ctx__)))
     end
 end
@@ -181,7 +218,7 @@ Query the ndrange on the backend. This function returns
 a tuple corresponding to kernel configuration.
 """
 macro ndrange()
-    quote
+    return quote
         $size($ndrange($(esc(:__ctx__))))
     end
 end
@@ -195,7 +232,7 @@ macro localmem(T, dims)
     # Stay in sync with CUDAnative
     id = gensym("static_shmem")
 
-    quote
+    return quote
         $SharedMemory($(esc(T)), Val($(esc(dims))), Val($(QuoteNode(id))))
     end
 end
@@ -216,7 +253,7 @@ macro private(T, dims)
     if dims isa Integer
         dims = (dims,)
     end
-    quote
+    return quote
         $Scratchpad($(esc(:__ctx__)), $(esc(T)), Val($(esc(dims))))
     end
 end
@@ -228,7 +265,7 @@ Creates a private local of `mem` per item in the workgroup. This can be safely u
 across [`@synchronize`](@ref) statements.
 """
 macro private(expr)
-    esc(expr)
+    return esc(expr)
 end
 
 """
@@ -238,7 +275,7 @@ end
 that span workitems, or are reused across `@synchronize` statements.
 """
 macro uniform(value)
-    esc(value)
+    return esc(value)
 end
 
 """
@@ -249,7 +286,7 @@ from each thread in the workgroup are visible in from all other threads in the
 workgroup.
 """
 macro synchronize()
-    quote
+    return quote
         $__synchronize()
     end
 end
@@ -266,7 +303,7 @@ workgroup. `cond` is not allowed to have any visible sideffects.
   - `CPU`: This synchronization will always occur.
 """
 macro synchronize(cond)
-    quote
+    return quote
         $(esc(cond)) && $__synchronize()
     end
 end
@@ -291,7 +328,7 @@ end
 ```
 """
 macro context()
-    esc(:(__ctx__))
+    return esc(:(__ctx__))
 end
 
 """
@@ -331,7 +368,7 @@ macro print(items...)
         end
     end
 
-    quote
+    return quote
         $__print($(map(esc, args)...))
     end
 end
@@ -387,7 +424,7 @@ macro index(locale, args...)
     end
 
     index_function = Symbol(:__index_, locale, :_, indexkind)
-    Expr(:call, GlobalRef(KernelAbstractions, index_function), esc(:__ctx__), map(esc, args)...)
+    return Expr(:call, GlobalRef(KernelAbstractions, index_function), esc(:__ctx__), map(esc, args)...)
 end
 
 ###
@@ -466,10 +503,6 @@ function get_backend end
 
 # Should cover SubArray, ReshapedArray, ReinterpretArray, Hermitian, AbstractTriangular, etc.:
 get_backend(A::AbstractArray) = get_backend(parent(A))
-
-get_backend(A::AbstractSparseArray) = get_backend(rowvals(A))
-get_backend(A::Diagonal) = get_backend(A.diag)
-get_backend(A::Tridiagonal) = get_backend(A.d)
 
 get_backend(::Array) = CPU()
 
@@ -554,6 +587,34 @@ function priority!(::Backend, prio::Symbol)
 end
 
 """
+    device(::Backend)::Int
+
+Returns the ordinal number of the currently active device starting at one.
+"""
+function device(::Backend)
+    return 1
+end
+
+"""
+    ndevices(::Backend)::Int
+
+Returns the number of devices the backend supports.
+"""
+function ndevices(::Backend)
+    return 1
+end
+
+"""
+    device!(::Backend, id::Int)
+"""
+function device!(backend::Backend, id::Int)
+    if !(0 < id <= ndevices(backend))
+        throw(ArgumentError("Device id $id out of bounds."))
+    end
+    return nothing
+end
+
+"""
     functional(::Backend)
 
 Queries if the provided backend is functional. This may mean different
@@ -566,6 +627,10 @@ This function should return a `Bool` or `missing` if not implemented.
     This function was added in KernelAbstractions v0.9.22
 """
 function functional(::Backend)
+    return missing
+end
+
+function pagelock!(::Backend, x)
     return missing
 end
 
@@ -597,7 +662,7 @@ struct Kernel{Backend, WorkgroupSize <: _Size, NDRange <: _Size, Fun}
 end
 
 function Base.similar(kernel::Kernel{D, WS, ND}, f::F) where {D, WS, ND, F}
-    Kernel{D, WS, ND, F}(kernel.backend, f)
+    return Kernel{D, WS, ND, F}(kernel.backend, f)
 end
 
 workgroupsize(::Kernel{D, WorkgroupSize}) where {D, WorkgroupSize} = WorkgroupSize
@@ -707,7 +772,7 @@ end
         push!(args, item)
     end
 
-    quote
+    return quote
         print($(args...))
     end
 end
@@ -773,6 +838,11 @@ end
     function __init__()
         @require EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869" include("../ext/EnzymeExt.jl")
     end
+end
+
+if !isdefined(Base, :get_extension)
+    include("../ext/LinearAlgebraExt.jl")
+    include("../ext/SparseArraysExt.jl")
 end
 
 end #module

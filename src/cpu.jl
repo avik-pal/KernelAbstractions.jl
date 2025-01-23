@@ -1,5 +1,3 @@
-import UnsafeAtomicsLLVM
-
 unsafe_free!(::AbstractArray) = return
 synchronize(::CPU) = nothing
 
@@ -35,6 +33,7 @@ function copyto!(backend::CPU, A, B)
 end
 
 functional(::CPU) = true
+pagelock!(::CPU, x) = nothing
 
 function (obj::Kernel{CPU})(args...; ndrange = nothing, workgroupsize = nothing)
     ndrange, workgroupsize, iterspace, dynamic = launch_config(obj, ndrange, workgroupsize)
@@ -44,12 +43,17 @@ function (obj::Kernel{CPU})(args...; ndrange = nothing, workgroupsize = nothing)
     end
 
     __run(obj, ndrange, iterspace, args, dynamic, obj.backend.static)
+    return nothing
 end
 
 const CPU_GRAINSIZE = 1024 # Vectorization, 4x unrolling, minimal grain size
 function default_cpu_workgroupsize(ndrange)
     # if the total kernel is small, don't launch multiple tasks
-    if prod(ndrange) <= CPU_GRAINSIZE
+    n = prod(ndrange)
+    if iszero(n)
+        # If the ndrange is zero return a workgroupsize of (1, 1,...)
+        return map(one, ndrange)
+    elseif n <= CPU_GRAINSIZE
         return ndrange
     else
         available = Ref(CPU_GRAINSIZE)
@@ -158,7 +162,7 @@ end
 
 @inline function __index_Global_Linear(ctx, idx::CartesianIndex)
     I = @inbounds expand(__iterspace(ctx), __groupindex(ctx), idx)
-    @inbounds LinearIndices(__ndrange(ctx))[I]
+    return @inbounds LinearIndices(__ndrange(ctx))[I]
 end
 
 @inline function __index_Local_Cartesian(_, idx::CartesianIndex)
@@ -166,7 +170,7 @@ end
 end
 
 @inline function __index_Group_Cartesian(ctx, ::CartesianIndex)
-    __groupindex(ctx)
+    return __groupindex(ctx)
 end
 
 @inline function __index_Global_Cartesian(ctx, idx::CartesianIndex)
@@ -187,7 +191,7 @@ end
 # CPU implementation of shared memory
 ###
 @inline function SharedMemory(::Type{T}, ::Val{Dims}, ::Val) where {T, Dims}
-    MArray{__size(Dims), T}(undef)
+    return MArray{__size(Dims), T}(undef)
 end
 
 ###
@@ -208,7 +212,7 @@ end
 # https://github.com/JuliaLang/julia/issues/39308
 @inline function aview(A, I::Vararg{Any, N}) where {N}
     J = Base.to_indices(A, I)
-    Base.unsafe_view(Base._maybe_reshape_parent(A, Base.index_ndims(J...)), J...)
+    return Base.unsafe_view(Base._maybe_reshape_parent(A, Base.index_ndims(J...)), J...)
 end
 
 @inline function Base.getindex(A::ScratchArray{N}, idx) where {N}

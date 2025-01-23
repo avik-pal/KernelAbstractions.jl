@@ -11,7 +11,7 @@ const Pkg = Base.require(
 )
 
 macro conditional_testset(name, skip_tests, expr)
-    esc(
+    return esc(
         quote
             @testset $name begin
                 if $name ∉ $skip_tests
@@ -31,6 +31,7 @@ include("private.jl")
 include("unroll.jl")
 include("nditeration.jl")
 include("copyto.jl")
+include("devices.jl")
 include("print_test.jl")
 include("compiler.jl")
 include("reflection.jl")
@@ -64,7 +65,11 @@ function testsuite(backend, backend_str, backend_mod, AT, DAT; skip_tests = Set{
     end
 
     @conditional_testset "copyto!" skip_tests begin
-        copyto_testsuite(backend)
+        copyto_testsuite(backend, AT)
+    end
+
+    @conditional_testset "Devices" skip_tests begin
+        devices_testsuite(backend)
     end
 
     @conditional_testset "Printing" skip_tests begin
@@ -86,6 +91,8 @@ function testsuite(backend, backend_str, backend_mod, AT, DAT; skip_tests = Set{
     @conditional_testset "Examples" skip_tests begin
         examples_testsuite(backend_str)
     end
+
+    return
 end
 
 end

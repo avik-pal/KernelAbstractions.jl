@@ -6,7 +6,7 @@ function find_return(stmt)
         result |= @capture(expr, return x_)
         expr
     end
-    result
+    return result
 end
 
 # XXX: Proper errors
@@ -14,7 +14,9 @@ function __kernel(expr, generate_cpu = true, force_inbounds = false)
     def = splitdef(expr)
     name = def[:name]
     args = def[:args]
-    find_return(expr) && error("Return statement not permitted in a kernel function $name")
+    generate_cpu && find_return(expr) && error(
+        "Return statement not permitted in a kernel function $name",
+    )
 
     constargs = Array{Bool}(undef, length(args))
     for (i, arg) in enumerate(args)
@@ -101,6 +103,7 @@ function transform_gpu!(def, constargs, force_inbounds)
         Expr(:block, let_constargs...),
         body,
     )
+    return
 end
 
 # The hard case, transform the function for CPU execution
@@ -135,6 +138,7 @@ function transform_cpu!(def, constargs, force_inbounds)
         Expr(:block, let_constargs...),
         Expr(:block, new_stmts...),
     )
+    return
 end
 
 struct WorkgroupLoop
@@ -148,7 +152,7 @@ end
 is_sync(expr) = @capture(expr, @synchronize() | @synchronize(a_))
 
 function is_scope_construct(expr::Expr)
-    expr.head === :block # ||
+    return expr.head === :block # ||
     # expr.head === :let
 end
 
@@ -158,7 +162,7 @@ function find_sync(stmt)
         result |= is_sync(expr)
         expr
     end
-    result
+    return result
 end
 
 # TODO proper handling of LineInfo
